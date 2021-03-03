@@ -10,6 +10,7 @@ using System.ComponentModel.DataAnnotations;
 using Amazon.S3.Transfer;
 using AWSS3Introduction.Models;
 using System.IO;
+using Newtonsoft.Json;
 
 namespace AWSS3Introduction.Controllers
 {
@@ -45,6 +46,10 @@ namespace AWSS3Introduction.Controllers
                     BucketName = bucketName,
                     ContinuationToken = continuationToken
                 });
+                if (response.HttpStatusCode != System.Net.HttpStatusCode.OK)
+                {
+                    return StatusCode((int)response.HttpStatusCode);
+                }
                 continuationToken = response.ContinuationToken;
                 if(response.S3Objects!=null && response.S3Objects.Count > 0)
                 {
@@ -69,6 +74,8 @@ namespace AWSS3Introduction.Controllers
         public async Task<IActionResult> DownloadAsStream(string bucketName, string fileName)
         {
             GetObjectResponse response = await _s3Client.GetObjectAsync(bucketName, fileName);
+            if (response.HttpStatusCode != System.Net.HttpStatusCode.OK)
+                return StatusCode((int)response.HttpStatusCode);
             MemoryStream objectStream = new MemoryStream();
             using(Stream stream = response.ResponseStream)
             {
@@ -83,6 +90,60 @@ namespace AWSS3Introduction.Controllers
         {
            DeleteObjectResponse response = await _s3Client.DeleteObjectAsync(bucketName, fileName);
             return StatusCode((int)response.HttpStatusCode);
+        }
+
+        [HttpPost("{bucketName}/json")]
+        public async Task<IActionResult> JsonUpload(string bucketName, [FromBody, Required] UploadJsonRequest request)
+        {
+            string id = request.Id.ToString();
+            string key = $"json/{id}.bin";
+            string data = JsonConvert.SerializeObject(request);
+            var response = await _s3Client.PutObjectAsync(new PutObjectRequest
+            {
+                BucketName = bucketName,
+                Key = key,
+                ContentBody = data,
+                ContentType = "application/json"
+            });
+            if(response.HttpStatusCode == System.Net.HttpStatusCode.OK ||
+                response.HttpStatusCode == System.Net.HttpStatusCode.Created)
+            {
+
+                string url = _s3Client.GetPreSignedURL(new GetPreSignedUrlRequest
+                {
+                    BucketName = bucketName,
+                    Key = key,
+                    Expires = DateTime.Now.AddDays(1)
+                });
+                return Ok(new UploadJsonResponse
+                {
+                    Key = key,
+                    Url = url
+                });
+            }
+            return StatusCode((int)response.HttpStatusCode);
+        }
+        [HttpGet("{bucketName}/json")]
+        public async Task<IActionResult> JsonDownload(string bucketName, string key)
+        {
+            if (string.IsNullOrEmpty(key))
+                return BadRequest(new { error = "Invalid fileName parameter" });
+            GetObjectResponse response = await _s3Client.GetObjectAsync(new GetObjectRequest
+            {
+                BucketName = bucketName,
+                Key = key
+            });
+            if (response.HttpStatusCode != System.Net.HttpStatusCode.OK)
+            {
+                return StatusCode((int)response.HttpStatusCode);
+            }
+            GetJsonResponse json = new GetJsonResponse();
+            using(StreamReader reader = new StreamReader(response.ResponseStream))
+            {
+                string jsonString = await reader.ReadToEndAsync();
+                json = JsonConvert.DeserializeObject<GetJsonResponse>(jsonString);
+            }
+            return Ok(json);
         }
 
         private async Task<IEnumerable<string>> Upload(string bucketName, IEnumerable<IFormFile> files)
