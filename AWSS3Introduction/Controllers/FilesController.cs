@@ -32,6 +32,7 @@ namespace AWSS3Introduction.Controllers
             }
             return BadRequest(new { error = "File list to be uploaded is empty" });
         }
+
         [HttpGet("{bucketName}/list")]
         public async Task<IActionResult> ListFiles(string bucketName)
         {
